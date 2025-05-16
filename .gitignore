@@ -1,41 +1,269 @@
-# Compiled Lua sources
-luac.out
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+local Camera = workspace.CurrentCamera
 
-# luarocks build files
-*.src.rock
-*.zip
-*.tar.gz
+-- UI Library
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xHeptc/Kavo-UI-Library/main/source.lua"))()
+local Window = Library.CreateLib("Hood Customs Lock GUI", "Sentinel")
 
-# Object files
-*.o
-*.os
-*.ko
-*.obj
-*.elf
+-- Globals
+local LockedPlayer = nil
+local LockPart = "HumanoidRootPart"
+local TPWalkSpeed = 20
+local TPWalkEnabled = false
+local FlyEnabled = false
+local FlySpeed = 50
+local BodyGyro, BodyVelocity
+local keysPressed = {}
 
-# Precompiled Headers
-*.gch
-*.pch
+-- Cam Lock Tab
+local LockTab = Window:NewTab("Cam Lock")
+local LockSection = LockTab:NewSection("Players in Server")
 
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-*.def
-*.exp
+local function LockOn(player)
+    LockedPlayer = player
+    print("Locked onto:", player.Name)
+end
 
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
+local function Unlock()
+    LockedPlayer = nil
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        Camera.CameraSubject = LocalPlayer.Character.Humanoid
+    end
+    print("Unlocked")
+end
 
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
+local function RefreshPlayers()
+    LockSection:NewButton("🔄 Refresh", "Reload players", RefreshPlayers)
+    LockSection:NewButton("🔓 Unlock", "Stop cam lock", Unlock)
 
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            LockSection:NewButton(player.DisplayName .. " (@" .. player.Name .. ")", "Lock onto player", function()
+                LockOn(player)
+            end)
+        end
+    end
+end
+
+RefreshPlayers()
+
+RunService.RenderStepped:Connect(function()
+    if LockedPlayer and LockedPlayer.Character then
+        local part = LockedPlayer.Character:FindFirstChild(LockPart)
+        if part then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
+        end
+    end
+end)
+
+-- Settings Tab
+local SettingsTab = Window:NewTab("Settings")
+local SettingsSection = SettingsTab:NewSection("Customization")
+
+SettingsSection:NewDropdown("Lock Part", "Choose part to cam lock", {
+    "HumanoidRootPart", "Head", "UpperTorso", "LowerTorso"
+}, function(part)
+    LockPart = part
+end)
+
+SettingsSection:NewDropdown("GUI Theme", "Change UI theme", {
+    "Sentinel", "DarkTheme", "LightTheme", "BloodTheme", "GrapeTheme", "Ocean", "Midnight", "Synapse"
+}, function(theme)
+    Library:Notify("Theme will change on re-execution.")
+end)
+
+-- Misc Tab
+local MiscTab = Window:NewTab("Misc")
+local MiscSection = MiscTab:NewSection("Tools")
+
+-- Fly (E Toggle)
+MiscSection:NewButton("🕊️ Fly (E toggle)", "Toggle flight mode", function()
+    FlyEnabled = not FlyEnabled
+    local HRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not HRP then return end
+
+    if FlyEnabled then
+        BodyGyro = Instance.new("BodyGyro")
+        BodyGyro.P = 9e4
+        BodyGyro.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+        BodyGyro.CFrame = HRP.CFrame
+        BodyGyro.Parent = HRP
+
+        BodyVelocity = Instance.new("BodyVelocity")
+        BodyVelocity.velocity = Vector3.new(0, 0, 0)
+        BodyVelocity.maxForce = Vector3.new(9e9, 9e9, 9e9)
+        BodyVelocity.Parent = HRP
+
+        RunService:BindToRenderStep("Fly", Enum.RenderPriority.Input.Value, function()
+            if not FlyEnabled then return end
+            BodyGyro.CFrame = Camera.CFrame
+
+            local vel = Vector3.new(0, 0, 0)
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then vel = vel + Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then vel = vel - Camera.CFrame.LookVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then vel = vel - Camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then vel = vel + Camera.CFrame.RightVector end
+            if UserInputService:IsKeyDown(Enum.KeyCode.Space) then vel = vel + Vector3.new(0, 1, 0) end
+            if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then vel = vel - Vector3.new(0, 1, 0) end
+
+            BodyVelocity.velocity = vel.Magnitude == 0 and Vector3.zero or vel.Unit * FlySpeed
+        end)
+    else
+        RunService:UnbindFromRenderStep("Fly")
+        if BodyGyro then BodyGyro:Destroy() end
+        if BodyVelocity then BodyVelocity:Destroy() end
+    end
+end)
+
+MiscSection:NewSlider("Fly Speed", "Adjust how fast you fly", 200, 10, function(val)
+    FlySpeed = val
+end)
+
+-- TPWalk
+MiscSection:NewToggle("🚶 TPWalk", "Enable TPWalk mode", function(state)
+    TPWalkEnabled = state
+end)
+
+MiscSection:NewSlider("TPWalk Speed", "Adjust teleport step size", 30, 1, function(val)
+    TPWalkSpeed = val
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or not TPWalkEnabled then return end
+    local key = input.KeyCode
+    if key == Enum.KeyCode.W or key == Enum.KeyCode.A or key == Enum.KeyCode.S or key == Enum.KeyCode.D then
+        keysPressed[key] = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gameProcessed)
+    if gameProcessed or not TPWalkEnabled then return end
+    local key = input.KeyCode
+    if key == Enum.KeyCode.W or key == Enum.KeyCode.A or key == Enum.KeyCode.S or key == Enum.KeyCode.D then
+        keysPressed[key] = nil
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not TPWalkEnabled then return end
+    local HRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not HRP then return end
+
+    local moveDir = Vector3.new(0, 0, 0)
+    for key, _ in pairs(keysPressed) do
+        if key == Enum.KeyCode.W then moveDir = moveDir + Camera.CFrame.LookVector
+        elseif key == Enum.KeyCode.S then moveDir = moveDir - Camera.CFrame.LookVector
+        elseif key == Enum.KeyCode.A then moveDir = moveDir - Camera.CFrame.RightVector
+        elseif key == Enum.KeyCode.D then moveDir = moveDir + Camera.CFrame.RightVector end
+    end
+
+    if moveDir.Magnitude > 0 then
+        moveDir = moveDir.Unit
+        HRP.CFrame = HRP.CFrame + moveDir * TPWalkSpeed
+    end
+end)
+
+-- GoTo Player
+MiscSection:NewTextBox("GoTo (Name)", "Type part of player name", function(txt)
+    txt = txt:lower()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local nameMatch = player.Name:lower():sub(1, #txt) == txt
+            local displayMatch = player.DisplayName:lower():sub(1, #txt) == txt
+            if nameMatch or displayMatch then
+                local HRP = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                local MyHRP = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                if HRP and MyHRP then
+                    MyHRP.CFrame = HRP.CFrame + Vector3.new(0, 3, 0)
+                    Library:Notify("📍 Teleported to " .. player.Name)
+                end
+                return
+            end
+        end
+    end
+    Library:Notify("❌ Player not found.")
+end)
+
+-- TP Tool
+MiscSection:NewButton("🛠️ TPTool", "Click to teleport", function()
+    local Tool = Instance.new("Tool")
+    Tool.RequiresHandle = false
+    Tool.Name = "TPTool"
+    Tool.Activated:Connect(function()
+        local pos = Mouse.Hit + Vector3.new(0, 3, 0)
+        if LocalPlayer.Character then
+            LocalPlayer.Character:MoveTo(pos.Position)
+        end
+    end)
+    Tool.Parent = LocalPlayer.Backpack
+end)
+
+-- Aim Viewer with Autofill
+local AimViewerTarget = nil
+local AimViewerLine = Drawing.new("Line")
+AimViewerLine.Thickness = 2
+AimViewerLine.Color = Color3.fromRGB(255, 0, 0)
+AimViewerLine.Transparency = 1
+AimViewerLine.Visible = false
+
+MiscSection:NewTextBox("👁️ AimViewer (Name)", "Type to find player", function(input)
+    input = input:lower()
+    local matches = {}
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local name = player.Name:lower()
+            local display = player.DisplayName:lower()
+            if name:find(input) or display:find(input) then
+                table.insert(matches, player)
+            end
+        end
+    end
+
+    if #matches == 0 then
+        Library:Notify("❌ No matches found.")
+        return
+    elseif #matches == 1 then
+        AimViewerTarget = matches[1]
+        Library:Notify("👁️ Viewing " .. AimViewerTarget.DisplayName .. "'s aim.")
+    else
+        for _, match in ipairs(matches) do
+            MiscSection:NewButton("👁️ " .. match.DisplayName .. " (@" .. match.Name .. ")", "Click to view aim", function()
+                AimViewerTarget = match
+                Library:Notify("👁️ Viewing " .. match.DisplayName .. "'s aim.")
+            end)
+        end
+    end
+end)
+
+MiscSection:NewButton("❌ Unview Aim", "Stop viewing player's aim", function()
+    AimViewerTarget = nil
+    AimViewerLine.Visible = false
+    Library:Notify("🚫 Stopped viewing aim.")
+end)
+
+RunService.RenderStepped:Connect(function()
+    if AimViewerTarget and AimViewerTarget.Character and AimViewerTarget.Character:FindFirstChild("Head") then
+        local head = AimViewerTarget.Character.Head
+        local lookVector = head.CFrame.LookVector
+        local startPos = head.Position
+        local endPos = startPos + lookVector * 300
+
+        local screenStart, onScreen1 = Camera:WorldToViewportPoint(startPos)
+        local screenEnd, onScreen2 = Camera:WorldToViewportPoint(endPos)
+
+        if onScreen1 and onScreen2 then
+            AimViewerLine.From = Vector2.new(screenStart.X, screenStart.Y)
+            AimViewerLine.To = Vector2.new(screenEnd.X, screenEnd.Y)
+            AimViewerLine.Visible = true
+        else
+            AimViewerLine.Visible = false
+        end
+    else
+        AimViewerLine.Visible = false
+    end
+end)
